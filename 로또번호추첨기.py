@@ -1,128 +1,129 @@
 import random
 import datetime
 import requests
+import concurrent.futures
+import pandas as pd
 import streamlit as st
 
 # ==========================================
-# 🎨 로또 번호별 색상 설정 (기존 둥근 네모 UI 유지)
+# 🎨 로또 번호별 색상 설정 
 # ==========================================
 def get_lotto_style(num):
-    if num <= 10:
-        return "background-color: #fbc400; color: #111;" # 1~10: 노랑
-    elif num <= 20:
-        return "background-color: #69c8f2; color: #111;" # 11~20: 파랑
-    elif num <= 30:
-        return "background-color: #ff7272; color: white;" # 21~30: 빨강
-    elif num <= 40:
-        return "background-color: #aaaaaa; color: white;" # 31~40: 회색
-    else:
-        return "background-color: #b0d840; color: #111;" # 41~45: 초록
+    if num <= 10: return "background-color: #fbc400; color: #111;"
+    elif num <= 20: return "background-color: #69c8f2; color: #111;"
+    elif num <= 30: return "background-color: #ff7272; color: white;"
+    elif num <= 40: return "background-color: #aaaaaa; color: white;"
+    else: return "background-color: #b0d840; color: #111;"
 
 # ==========================================
-# 📡 [과제 3] 최신 로또 당첨 번호 API 불러오기
+# 📡 [핵심 기술 1] 최근 1년(52주) 데이터 고속 수집
 # ==========================================
-@st.cache_data(ttl=3600) # 서버 과부하 방지를 위해 1시간 동안만 저장해두고 씁니다.
-def get_latest_lotto():
-    # 로또 1회차 날짜를 기준으로 이번 주가 몇 회차인지 계산
-    first_draw_date = datetime.date(2002, 12, 7)
-    today = datetime.date.today()
-    days_passed = (today - first_draw_date).days
-    draw_no = (days_passed // 7) + 1
+def fetch_draw(draw_no):
+    try:
+        url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={draw_no}"
+        res = requests.get(url, timeout=3).json()
+        if res.get("returnValue") == "success":
+            return [res[f"drwtNo{i}"] for i in range(1, 7)]
+    except:
+        return []
+    return []
+
+@st.cache_data(ttl=86400) # 서버 과부하를 막기 위해 분석 결과는 하루(86400초)에 한 번만 갱신!
+def analyze_recent_1_year():
+    # 현재 회차 계산
+    first_draw = datetime.date(2002, 12, 7)
+    latest_draw_no = ((datetime.date.today() - first_draw).days // 7) + 1
+
+    frequencies = {i: 0 for i in range(1, 46)}
+    draws_to_fetch = [latest_draw_no - i for i in range(52)] # 최근 52주
     
-    # 동행복권 API 찔러보기
-    for _ in range(3): 
-        try:
-            url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={draw_no}"
-            res = requests.get(url, timeout=5).json()
-            if res.get("returnValue") == "success":
-                winning_nums = [res[f"drwtNo{i}"] for i in range(1, 7)]
-                bonus_num = res["bnusNo"]
-                return draw_no, winning_nums, bonus_num, res["drwNoDate"]
-        except Exception:
-            pass
-        # 토요일 추첨 전이면 이전 회차를 찾아봅니다.
-        draw_no -= 1
-    return None, [], None, ""
+    # 52번을 한 번에 다발로 쏴서 1초 만에 긁어오기 (멀티스레딩)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        results = executor.map(fetch_draw, draws_to_fetch)
+        
+    for nums in results:
+        for n in nums:
+            frequencies[n] += 1
+    return frequencies
 
 # ==========================================
-# 🎲 화면 구성 및 추첨/채점 로직
+# 🧠 [핵심 기술 2] 확률 가중치 기반 추첨 알고리즘
 # ==========================================
-st.set_page_config(page_title="행운의 로또 번호 생성기", page_icon="🍀", layout="centered")
-
-st.markdown("<h1 style='text-align: center; margin-bottom: 10px;'>이번 주 1등은 바로 나! 💸</h1>", unsafe_allow_html=True)
-
-# 1. 최신 당첨 번호 화면에 띄우기
-draw_no, win_nums, bonus_num, draw_date = get_latest_lotto()
-
-if draw_no:
-    st.markdown(f"<div style='text-align: center; color: #666; margin-bottom: 20px;'>👑 <b>제 {draw_no}회</b> 실제 당첨 번호 ({draw_date})</div>", unsafe_allow_html=True)
+def generate_weighted_numbers(freq_dict):
+    numbers = list(range(1, 46))
+    # 많이 나온 번호일수록 뽑힐 확률(가중치)을 높여줍니다. (기본 기회 +1 보장)
+    weights = [freq_dict[n] + 1 for n in numbers] 
     
-    win_html = "<div style='display: flex; justify-content: center; align-items: center; margin-bottom: 30px; font-family: sans-serif;'>"
-    for n in win_nums:
-        style = get_lotto_style(n)
-        win_html += f"<div style='{style}; width: 45px; height: 45px; display: flex; justify-content: center; align-items: center; margin-right: 10px; border-radius: 5px; font-size: 1.2rem; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>{n:02d}</div>"
-    
-    win_html += "<div style='font-size: 1.5rem; margin-right: 10px; color: #666;'>+</div>"
-    bonus_style = get_lotto_style(bonus_num)
-    win_html += f"<div style='{bonus_style}; width: 45px; height: 45px; display: flex; justify-content: center; align-items: center; border-radius: 5px; font-size: 1.2rem; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>{bonus_num:02d}</div>"
-    win_html += "</div>"
-    st.markdown(win_html, unsafe_allow_html=True)
+    picked = []
+    for _ in range(6):
+        choice = random.choices(numbers, weights=weights, k=1)[0]
+        picked.append(choice)
+        
+        # 한 번 뽑힌 번호는 다시 안 뽑히게 목록에서 제거
+        idx = numbers.index(choice)
+        numbers.pop(idx)
+        weights.pop(idx)
+        
+    return sorted(picked)
 
+# ==========================================
+# 🎲 웹 앱 화면 구성
+# ==========================================
+st.set_page_config(page_title="빅데이터 로또 분석기", page_icon="📊", layout="centered")
+
+st.markdown("<h1 style='text-align: center; margin-bottom: 5px;'>📊 빅데이터 로또 추첨기</h1>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #666; margin-bottom: 20px;'>최근 1년치 당첨 패턴을 분석하여 확률을 높여보세요!</div>", unsafe_allow_html=True)
 st.divider()
 
-# 2. [과제 1] 구매 금액 입력 기능 추가
+# 💡 [UI 개선] 데이터 분석 토글(스위치)
+use_ai = st.toggle("🤖 최근 1년(52주) 당첨 패턴 분석 및 확률 가중치 반영하기")
+
+freq_data = None
+if use_ai:
+    with st.spinner("초고속 멀티스레딩으로 최근 52주 당첨 데이터를 수집/분석 중입니다... 🚀"):
+        freq_data = analyze_recent_1_year()
+    
+    # 📊 [핵심 기술 3] 스트림릿 내장 차트를 이용한 데이터 시각화
+    freq_df = pd.DataFrame(list(freq_data.items()), columns=["번호", "출현 횟수"]).set_index("번호")
+    top10 = freq_df.sort_values(by="출현 횟수", ascending=False).head(10)
+    
+    st.success("✅ 최근 1년 데이터 분석 완료! 가장 많이 나온 번호 Top 10을 확인하세요.")
+    st.bar_chart(top10, height=200)
+
 st.subheader("💰 구매 금액 설정")
-amount = st.number_input("자동 추첨을 원하는 금액을 입력하세요 (1게임 = 1,000원)", min_value=1000, max_value=50000, value=5000, step=1000)
+amount = st.number_input("자동 추첨을 원하는 금액 (1게임 = 1,000원)", min_value=1000, max_value=50000, value=5000, step=1000)
 game_count = amount // 1000
 
-if st.button(f"🎯 {amount:,}원어치 자동 번호 뽑기! ({game_count}게임)", type="primary", use_container_width=True):
+button_label = f"🎯 {amount:,}원어치 빅데이터 추천 뽑기!" if use_ai else f"🎲 {amount:,}원어치 100% 무작위 뽑기!"
+button_type = "primary" if use_ai else "secondary"
+
+if st.button(button_label, type=button_type, use_container_width=True):
     st.write("") 
     
     html_content = "<div style='background-color: #ffffff; padding: 20px; border-radius: 10px; border: 1px solid #ddd; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>"
-    copy_text_lines = [f"[🍀 로또 자동 {game_count}게임 추첨 결과]"]
+    copy_text_lines = [f"[📊 빅데이터 반영 {game_count}게임 추첨 결과]" if use_ai else f"[🎲 무작위 {game_count}게임 추첨 결과]"]
     
     for i in range(game_count):
         row_label = chr(65 + i) if i < 26 else str(i + 1)
-        nums = sorted(random.sample(range(1, 46), 6))
         
-        # 3. [과제 3 연결] 채점 로직
-        match_count = len(set(nums) & set(win_nums))
-        has_bonus = bonus_num in nums
-        
-        if match_count == 6:
-            rank = "🎉 1등!"
-            rank_color = "#e53e3e"
-        elif match_count == 5 and has_bonus:
-            rank = "🎊 2등!"
-            rank_color = "#dd6b20"
-        elif match_count == 5:
-            rank = "✨ 3등"
-            rank_color = "#d69e2e"
-        elif match_count == 4:
-            rank = "👍 4등"
-            rank_color = "#3182ce"
-        elif match_count == 3:
-            rank = "😊 5등"
-            rank_color = "#38a169"
+        # 사용자가 스위치를 켰으면 가중치 기반 알고리즘 적용, 안 켰으면 그냥 무작위
+        if use_ai and freq_data:
+            nums = generate_weighted_numbers(freq_data)
         else:
-            rank = "낙첨"
-            rank_color = "#a0aec0"
+            nums = sorted(random.sample(range(1, 46), 6))
         
         # 복사용 텍스트 조립
         num_str = ", ".join([f"{n:02d}" for n in nums])
-        copy_text_lines.append(f"{row_label}: {num_str} ({rank})")
+        copy_text_lines.append(f"{row_label}: {num_str}")
         
+        # 화면에 그려질 HTML 조립
         html_content += "<div style='display: flex; align-items: center; margin-bottom: 12px; font-family: sans-serif;'>"
         html_content += f"<div style='width: 30px; font-size: 1.1rem; font-weight: bold; color: #666;'>{row_label}</div>"
         
         for n in nums:
             style = get_lotto_style(n)
-            # 당첨 번호와 일치하면 빨간색 굵은 테두리로 눈에 띄게 강조!
-            border = "border: 3px solid #ff0000; box-sizing: border-box;" if n in win_nums else "border: 1px solid transparent; box-sizing: border-box;"
-            html_content += f"<div style='{style}; {border} width: 45px; height: 45px; display: flex; justify-content: center; align-items: center; margin-right: 8px; border-radius: 5px; font-size: 1.2rem; font-weight: bold;'>{n:02d}</div>"
+            html_content += f"<div style='{style}; border: 1px solid rgba(0,0,0,0.1); width: 45px; height: 45px; display: flex; justify-content: center; align-items: center; margin-right: 8px; border-radius: 5px; font-size: 1.2rem; font-weight: bold;'>{n:02d}</div>"
         
-        # 우측에 채점 결과 (1등~낙첨) 표시
-        html_content += f"<div style='margin-left: auto; font-size: 1rem; font-weight: bold; color: {rank_color};'>{rank}</div>"
         html_content += "</div>"
         
     html_content += "</div>"
@@ -130,8 +131,5 @@ if st.button(f"🎯 {amount:,}원어치 자동 번호 뽑기! ({game_count}게�
     st.balloons()
     
     st.write("")
-    
-    # 4. [과제 2] 전체 복사 기능 구현
-    st.subheader("📋 전체 번호 복사하기")
-    st.info("아래 박스 오른쪽 위 코너에 있는 📄 모양 아이콘을 누르면 전체 번호가 한 번에 복사됩니다!")
+    st.info("아래 박스 우측 상단 아이콘을 누르면 번호가 복사됩니다.")
     st.code("\n".join(copy_text_lines), language="text")
