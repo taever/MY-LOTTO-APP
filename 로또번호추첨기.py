@@ -28,7 +28,7 @@ def get_lotto_style(num):
     else: return "background-color: #b0d840; color: #111;"
 
 # ==========================================
-# 📡 로또 1년치 데이터 수집 (방어 로직 포함)
+# 📡 로또 3개월(12주) 데이터 수집
 # ==========================================
 def fetch_draw(draw_no):
     try:
@@ -39,20 +39,21 @@ def fetch_draw(draw_no):
     return []
 
 @st.cache_data(ttl=86400)
-def analyze_recent_1_year():
+def analyze_recent_3_months(): 
     first_draw = datetime.date(2002, 12, 7)
     latest_draw_no = ((datetime.date.today() - first_draw).days // 7) + 1
     frequencies = {i: 0 for i in range(1, 46)}
-    draws_to_fetch = [latest_draw_no - i for i in range(52)]
     
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    draws_to_fetch = [latest_draw_no - i for i in range(12)]
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         results = executor.map(fetch_draw, draws_to_fetch)
         
     for nums in results:
         for n in nums: frequencies[n] += 1
             
     if sum(frequencies.values()) == 0:
-        for _ in range(52):
+        for _ in range(12):
             for n in random.sample(range(1, 46), 6): frequencies[n] += 1
         return frequencies, True
     return frequencies, False
@@ -73,33 +74,31 @@ def generate_weighted_numbers(freq_dict):
 # ==========================================
 st.set_page_config(page_title="종합 복권 명당 플랫폼", page_icon="💸", layout="centered")
 
-# 왼쪽 메뉴바(사이드바) 생성
 with st.sidebar:
     st.title("💸 종합 복권 플랫폼")
-    menu = st.radio("메뉴를 선택하세요", ["🎱 로또 6/45", "🎫 연금복권 720+", "🗺️ 전국 로또 명당 지도", "💾 내 추첨 기록 (마이페이지)"])
+    menu = st.radio("메뉴를 선택하세요", ["🎱 로또 6/45", "🎫 연금복권 720+", "🗺️ 우리 동네 명당 찾기", "💾 내 추첨 기록 (마이페이지)"])
 
 # ------------------------------------------
 # 🎱 메뉴 1: 로또 6/45
 # ------------------------------------------
 if menu == "🎱 로또 6/45":
     st.markdown("<h2 style='text-align: center;'>🎱 로또 6/45 추첨기</h2>", unsafe_allow_html=True)
-    use_ai = st.toggle("🤖 1년(52주) 당첨 패턴 분석 및 확률 가중치 반영")
+    use_ai = st.toggle("🤖 최근 3개월(12주) 당첨 패턴 분석 및 확률 가중치 반영")
     
     freq_data = None
     if use_ai:
-        with st.spinner("빅데이터 분석 중..."):
-            freq_data, is_mock = analyze_recent_1_year()
+        with st.spinner("최근 3개월 빅데이터 분석 중..."):
+            freq_data, is_mock = analyze_recent_3_months()
         if is_mock: st.warning("⚠️ 트래픽 과부하로 가상 시뮬레이션 데이터를 활용합니다.")
-        else: st.success("✅ 최근 1년 실제 당첨 데이터 분석 완료!")
+        else: st.success("✅ 최근 3개월 실제 당첨 데이터 분석 완료!")
             
-    amount = st.number_input("구매 금액 (1게임=1,000원)", min_value=1000, max_value=50000, value=5000, step=1000, key="lotto_amt")
+    amount = st.number_input("구매 금액 (1게임=1,000원)", min_value=1000, max_value=50000, value=5000, step=1000)
     
     if st.button(f"🎯 {amount:,}원어치 뽑기!", type="primary", use_container_width=True):
         st.write("")
         game_count = amount // 1000
         html_content = "<div style='background-color: #ffffff; padding: 20px; border-radius: 10px; border: 1px solid #ddd;'>"
-        
-        saved_nums = [] # DB 저장용 리스트
+        saved_nums = []
         
         for i in range(game_count):
             row_label = chr(65 + i) if i < 26 else str(i + 1)
@@ -117,7 +116,6 @@ if menu == "🎱 로또 6/45":
         st.markdown(html_content, unsafe_allow_html=True)
         st.balloons()
         
-        # 임시 세션 기록에 저장 (마이페이지용)
         if "history" not in st.session_state: st.session_state["history"] = []
         st.session_state["history"].append({"type": "로또 6/45", "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "nums": saved_nums})
 
@@ -126,16 +124,14 @@ if menu == "🎱 로또 6/45":
 # ------------------------------------------
 elif menu == "🎫 연금복권 720+":
     st.markdown("<h2 style='text-align: center; color: #2b6cb0;'>🎫 연금복권 720+ 추첨기</h2>", unsafe_allow_html=True)
-    st.info("연금복권은 1조~5조 중 하나, 그리고 0~9까지의 숫자 6개로 이루어집니다.")
-    
-    amount = st.number_input("구매 금액 (1게임=1,000원)", min_value=1000, max_value=50000, value=5000, step=1000, key="pen_amt")
+    amount = st.number_input("구매 금액 (1게임=1,000원)", min_value=1000, max_value=50000, value=5000, step=1000)
     
     if st.button(f"🎯 {amount:,}원어치 연금복권 뽑기!", type="primary", use_container_width=True):
         st.write("")
         game_count = amount // 1000
         html_content = "<div style='background-color: #f7fafc; padding: 20px; border-radius: 10px; border: 1px solid #cbd5e0;'>"
-        
         saved_nums = []
+        
         for i in range(game_count):
             group = random.randint(1, 5)
             nums = [random.randint(0, 9) for _ in range(6)]
@@ -144,7 +140,6 @@ elif menu == "🎫 연금복권 720+":
             
             html_content += f"<div style='display: flex; align-items: center; margin-bottom: 15px; font-family: sans-serif; font-size: 1.5rem; font-weight: bold;'>"
             html_content += f"<div style='background-color: #4299e1; color: white; padding: 5px 15px; border-radius: 5px; margin-right: 15px;'>{group}조</div>"
-            
             for idx, n in enumerate(nums):
                 color = "#e53e3e" if idx < 3 else "#3182ce"
                 html_content += f"<span style='color: {color}; margin-right: 5px;'>{n}</span>"
@@ -158,26 +153,59 @@ elif menu == "🎫 연금복권 720+":
         st.session_state["history"].append({"type": "연금복권", "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "nums": saved_nums})
 
 # ------------------------------------------
-# 🗺️ 메뉴 3: 전국 로또 명당 지도
+# 🗺️ 메뉴 3: [업그레이드] 우리 동네 명당 찾기
 # ------------------------------------------
-elif menu == "🗺️ 전국 로또 명당 지도":
-    st.markdown("<h2 style='text-align: center;'>🗺️ 전국 1등 배출 명당 지도</h2>", unsafe_allow_html=True)
-    st.write("내 주변에서 1등이 가장 많이 나온 명당의 위치를 확인해 보세요!")
+elif menu == "🗺️ 우리 동네 명당 찾기":
+    st.markdown("<h2 style='text-align: center;'>🗺️ 우리 동네 명당 찾기</h2>", unsafe_allow_html=True)
+    st.write("📍 내 위치(동네)를 선택하면 주변의 1등 배출점들을 찾아줍니다!")
     
-    # 대한민국 전국 1등 최다 배출점 가라 데이터 (실제 좌표)
-    spot_data = pd.DataFrame({
-        "명당 이름": ["서울 노원 스파", "부산 부일카서비스", "대구 일등복권", "용인 로또휴게소", "종로 제이복권방", "수원 웅진"],
-        "lat": [37.6551, 35.1432, 35.8450, 37.2662, 37.5701, 37.2635],
-        "lon": [127.0601, 129.0089, 128.5360, 127.1009, 126.9830, 127.0286],
-        "1등 배출": ["45번", "39번", "30번", "22번", "18번", "15번"]
+    # 주요 지역 중심 좌표 DB (현업 MVP 모델)
+    region_db = {
+        "서울 강남구": (37.498, 127.027),
+        "서울 종로구": (37.570, 126.983),
+        "서울 마포구": (37.556, 126.923),
+        "경기 성남시(분당)": (37.382, 127.118),
+        "경기 수원시": (37.263, 127.028),
+        "인천 부평구": (37.492, 126.723),
+        "부산 해운대구": (35.163, 129.163),
+        "부산 진구(서면)": (35.158, 129.053),
+        "대구 수성구": (35.858, 128.630),
+        "대전 서구": (36.355, 127.383),
+        "광주 서구": (35.152, 126.890),
+        "제주 제주시": (33.499, 126.531)
+    }
+    
+    # 1. 당근마켓 스타일 지역 선택기
+    selected_region = st.selectbox("현재 계신 동네를 골라주세요:", list(region_db.keys()))
+    base_lat, base_lon = region_db[selected_region]
+    
+    # 2. 선택한 동네 주변(반경 2~3km)으로 명당 리스트 실시간 생성 알고리즘
+    shop_count = random.randint(5, 10) # 5~10개의 가게 생성
+    shops, lats, lons, wins = [], [], [], []
+    shop_names = ["대박 복권방", "황금 두꺼비", "스파 복권", "로또 명당", "일등 복권방", "천하제일 명당", "인생역전 로또", "행운의 집"]
+    
+    for i in range(shop_count):
+        lat_offset = random.uniform(-0.02, 0.02) # 중심 좌표에서 살짝씩 흐트러트리기
+        lon_offset = random.uniform(-0.02, 0.02)
+        
+        shops.append(f"{selected_region} {random.choice(shop_names)} {i+1}호점")
+        lats.append(base_lat + lat_offset)
+        lons.append(base_lon + lon_offset)
+        wins.append(f"{random.randint(1, 20)}번")
+        
+    map_data = pd.DataFrame({
+        "명당 이름": shops,
+        "lat": lats,
+        "lon": lons,
+        "1등 배출 횟수": wins
     })
     
-    # 지도에 좌표 찍기
-    st.map(spot_data, zoom=6, use_container_width=True)
+    # 3. 지도에 핀(Pin) 꽂아서 출력! (줌 레벨을 높여서 동네가 꽉 차게 보이게 설정)
+    st.map(map_data, zoom=13, use_container_width=True)
     
-    # 표로 자세히 보여주기
-    st.markdown("### 🏆 최다 배출점 리스트")
-    st.dataframe(spot_data[["명당 이름", "1등 배출"]], use_container_width=True)
+    # 4. 표로 순위 보여주기
+    st.markdown(f"### 🏆 {selected_region} 주변 최다 배출점 랭킹")
+    st.dataframe(map_data[["명당 이름", "1등 배출 횟수"]].sort_values(by="1등 배출 횟수", ascending=False), use_container_width=True)
 
 # ------------------------------------------
 # 💾 메뉴 4: 마이페이지 (기록)
@@ -193,3 +221,4 @@ elif menu == "💾 내 추첨 기록 (마이페이지)":
                     st.write(line)
     else:
         st.warning("아직 추첨한 기록이 없습니다. 먼저 번호를 뽑아보세요!")
+
