@@ -3,7 +3,6 @@ import time
 import datetime
 import os
 import requests
-import concurrent.futures
 import pandas as pd
 import streamlit as st
 
@@ -19,9 +18,15 @@ def get_lotto_style(num):
 
 
 # ==========================================
-# 📡 최근 12주(3개월) 데이터 수집 및 예외 처리(Fallback) 방어 로직
+# 📡 당첨번호 조회 (당첨 확인 기능에서 사용)
+#
+# v0.6까지 있던 "최근 N주 당첨 패턴 분석/가중치 추첨" 기능은 걷어냈다.
+# 동행복권 서버가 해외(클라우드) IP를 차단해서, 배포 환경에서는 항상
+# Mock(가상) 데이터로만 동작해 실제로는 의미가 없었기 때문이다.
+# 회차 하나를 조회하는 이 함수 자체도 배포 환경에서는 막힐 수 있는데,
+# '당첨 확인' 기능에서는 실패 시 화면에 바로 안내 문구를 띄우고 끝내면
+# 되므로(별도 Mock 로직 불필요) 그대로 남겨둔다.
 # ==========================================
-FETCH_WEEKS = 12
 FIRST_DRAW_DATE = datetime.date(2002, 12, 7)
 
 
@@ -30,7 +35,7 @@ def latest_draw_no():
 
 
 def fetch_draw_raw(draw_no):
-    """해당 회차의 원본 응답을 그대로 돌려준다 (번호 확인 기능에서 보너스볼까지 써야 해서)."""
+    """해당 회차의 원본 응답을 그대로 돌려준다 (당첨 확인 기능에서 보너스볼까지 써야 해서)."""
     try:
         url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={draw_no}"
         res = requests.get(url, timeout=3).json()
@@ -40,54 +45,6 @@ def fetch_draw_raw(draw_no):
         return None
     return None
 
-
-def fetch_draw(draw_no):
-    res = fetch_draw_raw(draw_no)
-    if res:
-        return [res[f"drwtNo{i}"] for i in range(1, 7)]
-    return []
-
-
-@st.cache_data(ttl=86400)
-def analyze_recent_period():
-    latest_no = latest_draw_no()
-    frequencies = {i: 0 for i in range(1, 46)}
-    draws_to_fetch = [latest_no - i for i in range(FETCH_WEEKS)]
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        results = executor.map(fetch_draw, draws_to_fetch)
-
-    for nums in results:
-        for n in nums:
-            frequencies[n] += 1
-
-    # 🚨 [플랜 B 방어 로직] 서버 차단(403 등)으로 실데이터가 하나도 안 걷혔다면
-    if sum(frequencies.values()) == 0:
-        for _ in range(FETCH_WEEKS):
-            mock_nums = random.sample(range(1, 46), 6)
-            for n in mock_nums:
-                frequencies[n] += 1
-        return frequencies, True  # 가상 데이터임을 표시
-
-    return frequencies, False
-
-
-# ==========================================
-# 🧠 가중치 기반 추첨 알고리즘 (로또 6/45)
-# ==========================================
-def generate_weighted_numbers(freq_dict):
-    numbers = list(range(1, 46))
-    weights = [freq_dict[n] + 1 for n in numbers]
-
-    picked = []
-    for _ in range(6):
-        choice = random.choices(numbers, weights=weights, k=1)[0]
-        picked.append(choice)
-        idx = numbers.index(choice)
-        numbers.pop(idx)
-        weights.pop(idx)
-
-    return sorted(picked)
 
 
 # ==========================================
@@ -232,49 +189,32 @@ def add_history(kind, text):
 # 페이지 1) 로또 6/45 추첨기
 # ------------------------------------------------------------------
 if menu == "🎲 로또 6/45 추첨기":
-    st.markdown("<h1 style='text-align: center; margin-bottom: 5px;'>📊 빅데이터 로또 추첨기</h1>", unsafe_allow_html=True)
-    st.markdown(f"<div style='text-align: center; color: #666; margin-bottom: 20px;'>최근 {FETCH_WEEKS}주치 당첨 패턴을 분석하여 확률을 높여보세요!</div>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; margin-bottom: 5px;'>📊 로또 자동 추첨기</h1>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: center; color: #666; margin-bottom: 20px;'>완전 무작위로 번호를 뽑아드립니다</div>", unsafe_allow_html=True)
     st.divider()
-
-    use_ai = st.toggle(f"🤖 최근 {FETCH_WEEKS}주 당첨 패턴 분석 및 확률 가중치 반영하기")
-
-    freq_data = None
-    if use_ai:
-        with st.spinner(f"최근 {FETCH_WEEKS}주 당첨 데이터를 수집/분석 중입니다... 🚀"):
-            freq_data, is_mock = analyze_recent_period()
-
-        if is_mock:
-            st.warning("⚠️ 현재 동행복권 서버 접속이 지연되어, 임시 분석(Mock) 데이터로 시뮬레이션 합니다.")
-        else:
-            st.success(f"✅ 최근 {FETCH_WEEKS}주 실제 데이터 분석 완료!")
-
-        freq_df = pd.DataFrame(list(freq_data.items()), columns=["번호", "출현 횟수"]).set_index("번호")
-        top10 = freq_df.sort_values(by="출현 횟수", ascending=False).head(10)
-
-        st.markdown(f"### 🏆 최근 {FETCH_WEEKS}주 가장 많이 나온 번호 Top 10")
-        st.bar_chart(top10, height=250)
+    # v0.6까지 있던 "최근 N주 당첨 패턴 분석" 가중치 기능은 제거했다.
+    # 동행복권 서버가 해외(클라우드) IP를 차단해서, 배포 환경에서는 항상
+    # Mock(가상) 데이터로만 동작해 실제로는 의미가 없었다 — 3차수 보고서에서
+    # 이미 확인된 한계다. 진짜로 풀려면 한국 소재 서버를 거치는 중계(프록시)가
+    # 필요한데 별도 인프라 비용이 들어가서, 이번 차수에서는 기능 자체를 걷어내고
+    # 순수 무작위 추첨만 남겨 사용자에게 실제로 동작하지 않는 기능을 보여주지
+    # 않기로 했다.
 
     st.subheader("💰 구매 금액 설정")
     amount = st.number_input("자동 추첨을 원하는 금액 (1게임 = 1,000원)", min_value=1000, max_value=50000, value=5000, step=1000)
     game_count = amount // 1000
 
-    button_label = f"🎯 {amount:,}원어치 빅데이터 추천 뽑기!" if use_ai else f"🎲 {amount:,}원어치 100% 무작위 뽑기!"
-    button_type = "primary" if use_ai else "secondary"
-
-    if st.button(button_label, type=button_type, use_container_width=True):
+    if st.button(f"🎲 {amount:,}원어치 무작위 뽑기!", type="primary", use_container_width=True):
         st.write("")
 
         html_content = "<div style='background-color: #ffffff; padding: 20px; border-radius: 10px; border: 1px solid #ddd; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>"
-        copy_text_lines = [f"[📊 빅데이터 반영 {game_count}게임 추첨 결과]" if use_ai else f"[🎲 무작위 {game_count}게임 추첨 결과]"]
+        copy_text_lines = [f"[🎲 무작위 {game_count}게임 추첨 결과]"]
         drawn_games = []
 
         for i in range(game_count):
             row_label = chr(65 + i) if i < 26 else str(i + 1)
 
-            if use_ai and freq_data:
-                nums = generate_weighted_numbers(freq_data)
-            else:
-                nums = sorted(random.sample(range(1, 46), 6))
+            nums = sorted(random.sample(range(1, 46), 6))
             drawn_games.append(nums)
 
             num_str = ", ".join([f"{n:02d}" for n in nums])
